@@ -3,7 +3,13 @@ import numpy as np
 
 class NArmedBandit:
     def __init__(
-        self, n, rewards=None, mean_rewards=None, variance_rewards=None, noise=0
+        self,
+        n,
+        rewards=None,
+        mean_rewards=None,
+        variance_rewards=None,
+        noise=0,
+        **kwargs
     ):
         self.n = n
         self._set_rewards(rewards, mean_rewards, variance_rewards)
@@ -18,9 +24,11 @@ class NArmedBandit:
         if rewards is not None:
             self.mean_rewards = rewards
             self.variance_rewards = np.zeros(self.n)
+            self.rewards = rewards
         elif mean_rewards is not None and variance_rewards is not None:
             self.mean_rewards = mean_rewards
             self.variance_rewards = variance_rewards
+            self.rewards = mean_rewards
         else:
             raise ValueError(
                 "Either rewards or mean_rewards and variance_rewards must be provided"
@@ -44,11 +52,45 @@ class NArmedBandit:
         return reward
 
 
+class NArmedBanditNonStationary(NArmedBandit):
+    def __init__(
+        self,
+        n,
+        rewards=None,
+        noise=0,
+        steps_to_change=100,
+    ):
+        self.n = n
+        self.rewards = rewards
+        self.action_count = np.zeros(n)
+        self.time = 0
+        self.last_action = None
+        self.last_reward = None
+        self.history = []
+        self.noise = noise
+        self.steps_to_change = steps_to_change
+
+    def _set_rewards(self, rewards):
+        rewards_shuffle = np.random.permutation(rewards)
+        self.rewards = rewards_shuffle
+
+    def step(self, action):
+        reward = self.rewards[action] + np.random.normal(0, self.noise)
+        self.action_count[action] += 1
+        self.time += 1
+        self.last_action = action
+        self.last_reward = reward
+        self.history.append((action, reward))
+        if self.time % self.steps_to_change == 0:
+            self._set_rewards(rewards=self.rewards)
+        return reward
+
+
 class Agent:
-    def __init__(self, env: NArmedBandit, epsilon=0.1):
+    def __init__(self, env: NArmedBandit, epsilon=0.1, initial_q_values=0):
         self.env = env
         self.n = env.n
-        self.q_values = np.zeros(self.n)
+        self.q_values = np.zeros(self.n) + initial_q_values
         self.action_count = np.zeros(self.n)
         self.time = 0
         self.last_action = None
@@ -83,8 +125,8 @@ class Agent:
 
 
 class IncrementalAgent(Agent):
-    def __init__(self, env: NArmedBandit, epsilon=0.1):
-        super().__init__(env, epsilon)
+    def __init__(self, env: NArmedBandit, epsilon=0.1, initial_q_values=0):
+        super().__init__(env, epsilon, initial_q_values)
 
     def action_value_function(self, action):
         q_action = self.q_values[action]
@@ -93,3 +135,16 @@ class IncrementalAgent(Agent):
         last_reward = action_rewards[-1]
 
         return q_action + (last_reward - q_action) / action_count
+
+
+class NonStationaryIncrementalAgent(Agent):
+    def __init__(self, env: NArmedBandit, epsilon=0.1, alpha=0.1, initial_q_values=0):
+        super().__init__(env, epsilon, initial_q_values)
+        self.alpha = alpha
+
+    def action_value_function(self, action):
+        q_action = self.q_values[action]
+        action_rewards = self.action_rewards[action]
+        last_reward = action_rewards[-1]
+
+        return q_action + self.alpha * (last_reward - q_action)
